@@ -9,8 +9,7 @@
 #include <Wire.h>
 #include <LiquidCrystal.h>
 
-const char* ssid = "mimimimi";
-const char* password = "nopasswordfr jk";
+#include "secrets.h"
 
 const char* apiKey = "if i commit my api key ill rotate it hopefully";
 const char* city = "Tokyo,jp";
@@ -20,24 +19,59 @@ const char* server = "https://api.weatherapi.com/v1/current.json";
 // LiquidCrystal_I2C lcd(0x3F, 16, 2);
 
 unsigned long lastUpdated = 0;
-const long updateInterval = 60000; // 10 mins;
+const long updateInterval = 600000; // 10 mins;
 const long connectionDelay = 500;
+
+void getWeather() {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    WiFiClientSecure client;
+    client.setInsecure();
+
+    String url = String(server) + "?key=" + apiKey + "&q=" + city + "&aqi=no";
+    
+    if (http.begin(client, url)) {
+      int httpCode = http.GET();
+      if (httpCode > 0) {
+        String data = http.getString();
+        Serial.println(data);
+      } else {
+        Serial.printf("http.GET() failed, error %d\n", httpCode);
+      }
+      http.end();
+    } else {
+      Serial.println("Could not make http.GET() request");
+    }
+  } else {
+    Serial.println("Could not connect to WiFi!");
+  }
+}
+
+String nf(int num) {
+  if (num < 10) return "0" + String(num);
+  return String(num);
+}
+
+String formateDate() {
+  return String(year()) + "-" + nf(month()) + "-" + nf(day()) + " " + nf(hour()) + ":" + nf(minute()) + ":" + nf(second());
+}
+
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(115200);
   while (!Serial);
 
-  Wifi.begin(ssid, password);
+  WiFi.begin(ssid, password);
 
-  while (Wifi.status() != WL_CONNECTED) {
+  while (WiFi.status() != WL_CONNECTED) {
     delay(connectionDelay);
-    Serial.println("Connecting to WiFi...")
+    Serial.println("Connecting to WiFi...");
   }
 
   Serial.println("Connected to the WiFi!");
   Serial.println("");
   Serial.println("IP address: ");
-  Serial.println(Wifi.localIP());
+  Serial.println(WiFi.localIP());
   // lcd.init();
   // lcd.backlight();
   // lcd.clear();
@@ -45,41 +79,16 @@ void setup() {
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
   if (Serial.available()) {
     char t = Serial.read();
     if (t == 'T') {
       unsigned long timestamp = Serial.parseInt();
       setTime(timestamp);
-
-      Serial.print("Time set: ");
-      Serial.println(formatDate());
     }
   }
 
-  if (millis() - lastUpdated > 1000) {
-    lastPrint = millis();
-    Serial.print("-----")
-    Serial.println(formatDate());
+  if (millis() - lastUpdated > updateInterval) {
     getWeather();
+    lastUpdated = millis();
   }
-
-}
-
-void getWeather() {
-  if (WiFi.status() == WL_CONNECTED) {
-    HTTPClient http;
-
-    String url = String(server) + "?key=" + apiKey + "&q=" + city + "&aqi=no"
-    if (http.begin(url)) {
-      if (http.GET() > 0) {
-        String data = http.getString();
-      }
-      http.end();
-    }
-  }
-}
-
-String formateDate() {
-  return String(year()) + "-" + nf(month(), 2) + "-" + nf(day(), 2) + " " + nf(hour(), 2) + ":" + (minute(), 2) + ":" + (second(), 2); 
 }
