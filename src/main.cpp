@@ -40,7 +40,7 @@ void getWeather() {
 
         JsonDocument doc;
 
-        DeserializationError error = deserializeJson(doc, client);
+        DeserializationError error = deserializeJson(doc, payload);
         if (error) {
           Serial.print(F("deseriializeJson() failed"));
           Serial.println(error.c_str());
@@ -97,6 +97,8 @@ void spinner() {
 
 void setup() {
   // put your setup code here, to run once:
+  Wire.begin(21, 22);
+  Wire.setClock(100000);
   Serial.begin(115200);
   while (!Serial);
 
