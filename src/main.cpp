@@ -20,6 +20,53 @@ const long updateInterval = 600000; // 10 mins;
 const long busInterval = 30067; // 30.67 secs;
 const long connectionDelay = 500;
 
+void getLocation() {
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClientSecure client;
+    client.setInsecure();
+    int networks = WiFi.scanNetworks();
+    JsonDocument doc;
+    JsonArray wifiArray = doc["wifiAccessPoints"].to<JsonArray>();
+    for (int i = 0; i < networks; i++) {
+      JsonObject ap = wifiArray.add<JsonObject>();
+      ap["macAddress"] = WiFi.BSSIDstr(i);
+      ap["signalStrength"] = WiFi.RSSI(i);
+      ap["signalToNoiseRatio"] = 1;
+    }
+
+    String jsonStr;
+    serializeJson(doc, jsonStr);
+    Serial.println();
+
+    HTTPClient http;
+    
+    String url = "https://www.googleapis.com/geolocation/v1/geolocate?key=" + String(googleApiKey);
+    Serial.println("Using the geolocation api: ");
+    Serial.println(url);
+    if (http.begin(client, url)) {
+      http.addHeader("Content-Type", "application/json");
+      int httpCode = http.POST(jsonStr);
+
+      if (httpCode > 0) {
+        String payload = http.getString();
+        Serial.println(payload);
+
+        JsonDocument doc;
+
+        DeserializationError error = deserializeJson(doc, payload);
+        if (error) {
+          Serial.print(F("deserializeJson() failed"));
+          Serial.println(error.c_str());
+          return;
+        }
+
+        float lat = doc["location"]["lat"];
+        float lng = doc["location"]["lng"];
+      }
+    }
+  }
+}
+
 void getBus() {
   Serial.println("Accessing the train api");
   if (WiFi.status() == WL_CONNECTED) {
@@ -121,7 +168,7 @@ void getBus() {
 void getWeather() {
   Serial.println("Accessing the weather api");
   if (WiFi.status() == WL_CONNECTED) {
-    String url = "https://api.weatherapi.com/v1/current.json?key=" + String(apiKey) + "&q=" + city + "&aqi=no";;
+    String url = "https://api.weatherapi.com/v1/current.json?key=" + String(weatherApiKey) + "&q=" + city + "&aqi=no";;
 
     WiFiClientSecure client;
     client.setInsecure();
@@ -224,6 +271,7 @@ void setup() {
   LCD.println("Online");
   LCD.setCursor(0, 1);
 
+  getLocation();
   getBus();
   lastUpdated = millis();
 }
