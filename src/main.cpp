@@ -41,22 +41,26 @@ const long busInterval = 30067; // 30.67 secs;
 const long connectionDelay = 500;
 
 bool isBus = false;
+bool cancelBus = false;
 String busId = "";
 
-int yesterday = -1;
-int lastMin = -1;
-
 int lastWeatherUpdated = 0;
-int weatherInterval = 60000;
+int weatherInterval = 300000;
 int tempLen = 3;
 
+float user_lat, user_lng;
+
+int yesterday = -1;
+int lastTimeUpdated = 0;
+const unsigned long timeInterval = 60000;
 
 void getTime() {
   if (WiFi.status() == WL_CONNECTED) {
     struct tm timeinfo;
     if (!getLocalTime(&timeinfo)) {
-      LCD.setCursor(0,0);
-      LCD.print("Time Failed");
+      LCD.setCursor(7,0);
+      LCD.print("Time Fail ");
+      Serial.println("Time failed");
       delay(1000);
       return;
     }
@@ -75,76 +79,18 @@ void getTime() {
       yesterday = timeinfo.tm_mday;
     }
 
-
-    if (timeinfo.tm_min != lastMin) {
-      int timeCursor = 16 - tempLen - 6;
-      LCD.setCursor(timeCursor, 0);
-      LCD.print("     ");
-      LCD.setCursor(timeCursor, 0);
-      LCD.print(clock);
-      lastMin = timeinfo.tm_min;
-    }
-  }
-}
-
-void getWeather() {
-  Serial.println("Accessing the weather api");
-  if (WiFi.status() == WL_CONNECTED) {
-    String url = "https://api.weatherapi.com/v1/current.json?key=" + String(weatherApiKey) + "&q=" + city + "&aqi=no";;
-
-    WiFiClientSecure client;
-    client.setInsecure();
-
-    HTTPClient http;
-
-    Serial.println("Using the weather url: ");
-    Serial.println(url);
-    if (http.begin(client, url)) {
-      int httpCode = http.GET();
-
-      if (httpCode > 0) {
-        String payload = http.getString();
-        Serial.println(payload);
-
-        JsonDocument doc;
-
-        DeserializationError error = deserializeJson(doc, payload);
-        if (error) {
-          Serial.print(F("deserializeJson() failed"));
-          Serial.println(error.c_str());
-          return;
-        }
-        const char* region = doc["location"]["region"];
-        float temp_c = doc["current"]["temp_c"];
-        float feelslike_c = doc["current"]["feelslike_c"];
-        const char* condition = doc["current"]["condition"]["text"];
-        float wind_kph = doc["current"]["wind_kph"];
-        // LCD.setCursor(12, 0);
-        // LCD.printf("%.13s", region);
-
-        char tempStr[10];
-        sprintf(tempStr, "%.0fC", temp_c);
-        int len = strlen(tempStr);
-        tempLen = len;
-        int cursorPos = 16 - len;
-        LCD.setCursor(cursorPos, 0);
-        LCD.printf(tempStr);
-
-        Serial.printf("%s, | %.1f°C (feels %.1f°C) | %s | Wind %.1f\n",
-                      region, temp_c, feelslike_c, condition, wind_kph
-        );
-      } else {
-        Serial.printf("http.GET() failed, error %d\n", httpCode);
-      }
-      http.end();
-    } else {
-      Serial.println("Could not make http.GET() request");
-    }
+    int timeCursor = 16 - tempLen - 6;
+    LCD.setCursor(timeCursor, 0);
+    LCD.print("     ");
+    LCD.setCursor(timeCursor, 0);
+    LCD.print(clock);
+  
   } else {
-    Serial.println("Could not connect to WiFi!");
+    LCD.setCursor(7, 0);
+    LCD.print("WiFi Fail ");
+    Serial.println("Wifi not connected for the time");
   }
 }
-
 
 bool getLocation(float* latOut, float* lngOut) {
   *latOut = 0.0f;
@@ -155,6 +101,7 @@ bool getLocation(float* latOut, float* lngOut) {
     client.setInsecure();
     int networks = WiFi.scanNetworks();
     JsonDocument doc;
+    doc.clear();
     JsonArray wifiArray = doc["wifiAccessPoints"].to<JsonArray>();
     for (int i = 0; i < networks; i++) {
       JsonObject ap = wifiArray.add<JsonObject>();
@@ -203,6 +150,73 @@ bool getLocation(float* latOut, float* lngOut) {
   return false;
 }
 
+
+void getWeather() {
+  Serial.println("Accessing the weather api");
+  if (WiFi.status() == WL_CONNECTED) {
+    
+    if (!getLocation(&user_lat, &user_lng)) {
+      LCD.setCursor(13, 0);
+      LCD.print("Loc Fail");
+      Serial.println("Location could not be found");
+      return;
+    }
+
+    String loc = String(user_lat) + "," + String(user_lng);
+
+    String url = "https://api.weatherapi.com/v1/current.json?key=" + String(weatherApiKey) + "&q=" + loc + "&aqi=no";;
+
+    WiFiClientSecure client;
+    client.setInsecure();
+
+    HTTPClient http;
+
+    Serial.println("Using the weather url: ");
+    Serial.println(url);
+    if (http.begin(client, url)) {
+      int httpCode = http.GET();
+
+      if (httpCode > 0) {
+        String payload = http.getString();
+        Serial.println(payload);
+
+        JsonDocument doc;
+
+        DeserializationError error = deserializeJson(doc, payload);
+        if (error) {
+          Serial.print(F("deserializeJson() failed"));
+          Serial.println(error.c_str());
+          return;
+        }
+        const char* region = doc["location"]["region"];
+        float temp_c = doc["current"]["temp_c"];
+        float feelslike_c = doc["current"]["feelslike_c"];
+        const char* condition = doc["current"]["condition"]["text"];
+        float wind_kph = doc["current"]["wind_kph"];
+
+        char tempStr[10];
+        sprintf(tempStr, "%.0fC", temp_c);
+        int len = strlen(tempStr);
+        tempLen = len;
+        int cursorPos = 16 - len;
+        LCD.setCursor(cursorPos, 0);
+        LCD.print(tempStr);
+
+        Serial.printf("%s, | %.1f°C (feels %.1f°C) | %s | Wind %.1f\n",
+                      region, temp_c, feelslike_c, condition, wind_kph
+        );
+      } else {
+        Serial.printf("http.GET() failed, error %d\n", httpCode);
+      }
+      http.end();
+    } else {
+      Serial.println("Could not make http.GET() request");
+    }
+  } else {
+    Serial.println("Could not connect to WiFi!");
+  }
+}
+
 void getBus(String stopId) {
   Serial.println("Accessing the train api");
   if (WiFi.status() == WL_CONNECTED) {
@@ -233,14 +247,22 @@ void getBus(String stopId) {
         JsonObject predictionsObj = doc["predictions"].as<JsonObject>();
         if (predictionsObj.isNull() || predictionsObj.size() == 0) {
           Serial.println("No prediction data");
-          LCD.clear();
+          LCD.setCursor(0, 0);
+          LCD.print("       ");
+          LCD.setCursor(0, 1);
+          LCD.print("       ");
+          LCD.setCursor(0, 0);
           LCD.print("No Bus Data!");
         }
 
         JsonObject routeObj = predictionsObj["direction"].as<JsonObject>();
         if (routeObj.isNull()) {
           Serial.println("No directions found");
-          LCD.clear();
+          LCD.setCursor(0, 0);
+          LCD.print("       ");
+          LCD.setCursor(0, 1);
+          LCD.print("       ");
+          LCD.setCursor(0, 0);
           LCD.print("No Directions!");
           return;
         }
@@ -256,19 +278,28 @@ void getBus(String stopId) {
           predictions = tempDoc.to<JsonArray>();
           predictions.add(predVar);
         } else {
-          LCD.clear();
-          LCD.print("No upcoming!");
+          LCD.setCursor(0, 0);
+          LCD.print("       ");
+          LCD.setCursor(0, 1);
+          LCD.print("       ");
+          LCD.setCursor(0, 0);
+          LCD.print("N/A");
           return;
         }
         if (predictions.size() == 0) {
-          LCD.clear();
-          LCD.print("No upcoming!");
+          LCD.setCursor(0, 0);
+          LCD.print("       ");
+          LCD.setCursor(0, 1);
+          LCD.print("       ");
+          LCD.setCursor(0, 0);
+          LCD.print("N/A");
+          Serial.println("No upcoming!");
           return;
         }
         isBus = true;
         busId = stopId;
 
-        float time0 = atof( predictions[0]["seconds"] | "9999");
+        float time0 = predictions[0]["seconds"].as<float>();
         int total_seconds = static_cast<int>(std::round(time0));
         int seconds = total_seconds % 60;
         int minutes = total_seconds / 60;
@@ -276,10 +307,10 @@ void getBus(String stopId) {
         char buf[17];
         snprintf(buf, sizeof(buf), "%d:%02d", minutes, seconds);
         LCD.setCursor(0, 0);
-        LCD.printf(buf);
+        LCD.print(buf);
 
         if (predictions.size() > 1) {
-          float time1 = atof(predictions[1]["seconds"] | "9999");
+          float time1 = predictions[1]["seconds"].as<float>();
           int total_seconds_next = static_cast<int>(std::round(time1));
           int seconds_next = total_seconds_next % 60;
           int minutes_next = total_seconds_next / 60;
@@ -292,56 +323,72 @@ void getBus(String stopId) {
         }
       } else {
         Serial.printf("http.GET() failed, error %d\n", httpCode);
-        LCD.clear();
-        LCD.setCursor(0, 0);
-        LCD.print("HTTP Error");
+          LCD.setCursor(0, 0);
+          LCD.print("       ");
+          LCD.setCursor(0, 1);
+          LCD.print("       ");
+          LCD.setCursor(0, 0);
+        LCD.print("ERR");
       }
       http.end();
     } else {
       Serial.println("Could not make HTTP request");
-      LCD.clear();
       LCD.setCursor(0, 0);
-      LCD.print("HTTP Request Failed");
+      LCD.print("       ");
+      LCD.setCursor(0, 1);
+      LCD.print("       ");
+      LCD.setCursor(0, 0);
+      LCD.print("REQ");
     }
   } else {
     Serial.println("WiFi not connected");
-    LCD.clear();
     LCD.setCursor(0, 0);
-    LCD.print("WiFi Error");
+    LCD.print("       ");
+    LCD.setCursor(0, 1);
+    LCD.print("       ");
+    LCD.setCursor(0, 0);
+    LCD.print("WIFI!");
   }
 }
 
 String getBusNum() {
+  LCD.setCursor(0, 0);
+  LCD.print("ENT: ");
   char key;
   String keyStr = "";
   String prevKeyStr = "";
   while (true) {
     char key = keypad.getKey();
-
     if (key != NO_KEY) {
+      Serial.println("Key pressed: " + String(key)); 
       if (key >= '0' && key <= '9') {
         keyStr += key;
       } else if (key == '*') {
         if (!keyStr.isEmpty()) {
           keyStr.remove(keyStr.length() - 1);
         }
-      } else if (key == '#') { keyStr += 'N'; break; } 
-        else if (key == 'A' && !keyStr.isEmpty()) { keyStr += 'N'; break; }
+      } else if (key == '#') {
+        return "CANCEL"; 
+      } else if (key == 'A' && !keyStr.isEmpty()) { keyStr += 'N'; break; }
         else if (key == 'B' && !keyStr.isEmpty()) { keyStr += 'E'; break; }
         else if (key == 'C' && !keyStr.isEmpty()) { keyStr += 'S'; break; }
         else if (key == 'D' && !keyStr.isEmpty()) { keyStr += 'W'; break; }
-      if (keyStr != prevKeyStr) {
+        if (keyStr != prevKeyStr) {
         prevKeyStr = keyStr;
-        LCD.clear();
-        LCD.setCursor(0, 1);
+        LCD.setCursor(0, 0);
+        LCD.print("       ");
+        LCD.setCursor(0, 0);
         LCD.print(keyStr);
       }
     }
+    LCD.setCursor(0, 0);
+    LCD.print("       ");
+    LCD.setCursor(0, 0);
+    LCD.print(keyStr);
+    if (keypad.getKey() == '#') {
+      return "CANCEL";
+    }
   }
-  LCD.clear();
-  LCD.setCursor(0, 1);
-  LCD.print(keyStr);
-
   return keyStr;
 }
 
@@ -418,14 +465,15 @@ void getBusRoute(String route) {
         JsonObject routeObj = doc["route"];
         if (!routeObj) {
           Serial.println("No route found");
-          LCD.clear();
+          LCD.setCursor(0, 0);
+          LCD.print("       ");
           LCD.setCursor(0, 1);
+          LCD.print("       ");
+          LCD.setCursor(0, 0);
           LCD.print("No route!");
           return;
         }
 
-        float lat2, lng2;
-        getLocation(&lat2, &lng2);
         String closestStopId = "";
         float closestDist = 999999.0;
         float closestLat = 0.0;
@@ -440,12 +488,15 @@ void getBusRoute(String route) {
             Serial.println("Tag: " + String(stopTag) + " | Latitude: " + String(lat) + " | Longitude: " + String(lng) + " | Direction: " + dir);
             float lat1 = atof(lat);
             float lng1 = atof(lng);
-            float dist = getDistance(lat1, lng1, lat2, lng2);
+            float dist = getDistance(user_lat, user_lng, lat1, lng1);
             if (dist < closestDist) {
               closestDist = dist;
               closestLat = lat1;
               closestLng = lng1;
-              closestStopId = stop["stopId"].as<String>();
+              String stopIdChar = stop["stopId"].as<String>();
+              if (stopIdChar) {
+                closestStopId = stopIdChar;
+              }
             }
           }
         }
@@ -455,25 +506,37 @@ void getBusRoute(String route) {
           getBus(closestStopId);
         } else {
           Serial.println("No stops found for " + String(busDir));
-          LCD.clear();
+          LCD.setCursor(0, 0);
+          LCD.print("       ");
+          LCD.setCursor(0, 1);
+          LCD.print("       ");
           LCD.print("No stop!");
         }
       } else {
         Serial.printf("http.GET() failed, error %d\n", httpCode);
-        LCD.clear();
+        LCD.setCursor(0, 0);
+        LCD.print("       ");
+        LCD.setCursor(0, 1);
+        LCD.print("       ");
         LCD.setCursor(0, 0);
         LCD.print("HTTP Error");
       }
       http.end();
     } else {
       Serial.println("Could not make HTTP request");
-      LCD.clear();
+      LCD.setCursor(0, 0);
+      LCD.print("       ");
+      LCD.setCursor(0, 1);
+      LCD.print("       ");
       LCD.setCursor(0, 0);
       LCD.print("HTTP Request Failed");
     }
   } else {
     Serial.println("WiFi not connected");
-    LCD.clear();
+    LCD.setCursor(0, 0);
+    LCD.print("       ");
+    LCD.setCursor(0, 1);
+    LCD.print("       ");
     LCD.setCursor(0, 0);
     LCD.print("WiFi Error");
   }
@@ -526,33 +589,61 @@ void setup() {
   LCD.clear();
   LCD.setCursor(0, 0);
   LCD.print("ON");
-  LCD.setCursor(0, 1);
 
-  configTzTime(timezone, "pool.ntp.org", "time.nist.gov");
+  configTzTime(timezone, "pool.ntp.org", "time.nist.gov", "time.google.com");
   Serial.println("Loading time");
   LCD.setCursor(7, 1);
   LCD.print("--- -----");
   LCD.setCursor(7, 0);
-  LCD.print("--:-- --C");
+  LCD.print("--:--    ");
 
     while (time(nullptr) < 1000000000L) {
       delay(200);
       Serial.print("Waiting to load time...");
     }
     Serial.println("Time loaded!");
-  // String busNum = getBusNum();
-  // getBusRoute(busNum);
+
+  getTime();
   getWeather();
   lastUpdated = millis();
   lastWeatherUpdated = millis();
+  lastTimeUpdated = millis();
 }
 
 void loop() {
-  getTime();
+  char key = keypad.getKey();
+  if (key == '#') {
+      cancelBus = true;
+  }
+  if (cancelBus) {
+    isBus = false;
+    busId = "";
+    cancelBus = false;
+    LCD.clear();
+    LCD.setCursor(0, 0);
+    LCD.print("ENT:");
+    return;
+  }
+
+  if (!isBus) {
+    String busNum = getBusNum();
+    if (busNum == "CANCEL") {
+      return;
+    }
+    getBusRoute(busNum);
+    isBus = true;
+  }
+
   if (millis() - lastWeatherUpdated > weatherInterval) {
     getWeather();
     lastWeatherUpdated = millis();
   }
+
+  if (millis() - lastTimeUpdated > timeInterval) {
+    getTime();
+    lastTimeUpdated = millis();
+  }
+
   if (isBus) {
     if (millis() - lastUpdated > busInterval) {
       getBus(busId);
