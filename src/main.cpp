@@ -9,8 +9,26 @@
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 
+#include <Keypad.h>
+
 #include "secrets.h"
-const char* city = "Tokyo";
+
+const char* city = "Toronto";
+
+#define ROW_NUM 4
+#define COLUMN_NUM 4
+
+char keys[ROW_NUM][COLUMN_NUM] = {
+  {'1', '2', '3', 'A'},
+  {'4', '5', '6', 'B'},
+  {'7', '8', '9', 'C'},
+  {'*', '0', '#', 'D'},
+};
+
+byte pin_rows[ROW_NUM] = {23, 19, 18, 5};
+byte pin_column[COLUMN_NUM] = {17, 16, 4, 13};
+
+Keypad keypad = Keypad( makeKeymap(keys), pin_rows, pin_column, ROW_NUM, COLUMN_NUM);
 
 // Setup
 LiquidCrystal_I2C LCD(0x3F, 16, 2);
@@ -19,6 +37,41 @@ unsigned long lastUpdated = 0;
 const long updateInterval = 600000; // 10 mins;
 const long busInterval = 30067; // 30.67 secs;
 const long connectionDelay = 500;
+
+void getBusRoute() {
+  char key;
+  String keyStr = "";
+  String prevKeyStr = "";
+  while (true) {
+    char key = keypad.getKey();
+
+    if (key != NO_KEY) {
+      if (key == 'D') {
+        break;
+      } else if (key = 'A') {
+        if (!keyStr.isEmpty()) {
+          keyStr.remove(keyStr.length() - 1);
+        }
+      } else {
+        keyStr += key;
+      }
+      if (keyStr != prevKeyStr) {
+        prevKeyStr = keyStr;
+        LCD.clear();
+        LCD.setCursor(0, 1);
+        LCD.print(keyStr);
+      }
+    }
+  }
+  LCD.clear();
+  LCD.setCursor(0, 1);
+  LCD.print(keyStr);
+}
+
+void getBusStops(int route) {
+
+}
+
 
 void getLocation() {
   if (WiFi.status() == WL_CONNECTED) {
@@ -270,9 +323,9 @@ void setup() {
   LCD.setCursor(0, 0);
   LCD.println("Online");
   LCD.setCursor(0, 1);
-
-  getLocation();
-  getBus();
+  getBusRoute();
+  // getLocation();
+  // getBus();
   lastUpdated = millis();
 }
 

@@ -6,3 +6,4 @@
 .env
 src/secrets.h
 networks.json
+weather.json
