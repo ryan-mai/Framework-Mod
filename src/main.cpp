@@ -38,7 +38,7 @@ const long updateInterval = 600000; // 10 mins;
 const long busInterval = 30067; // 30.67 secs;
 const long connectionDelay = 500;
 
-void getBusRoute() {
+String getBusNum() {
   char key;
   String keyStr = "";
   String prevKeyStr = "";
@@ -46,12 +46,20 @@ void getBusRoute() {
     char key = keypad.getKey();
 
     if (key != NO_KEY) {
-      if (key == 'D') {
+      if (key == '#') {
         break;
-      } else if (key = 'A') {
+      } else if (key == '*') {
         if (!keyStr.isEmpty()) {
           keyStr.remove(keyStr.length() - 1);
         }
+      } else if (key == 'A') {
+        keyStr += 'N';
+      } else if (key == 'B') {
+        keyStr += 'E';
+      } else if (key == 'C') {
+        keyStr += 'S';
+      } else if (key == 'D') {
+        keyStr += 'W';
       } else {
         keyStr += key;
       }
@@ -66,10 +74,126 @@ void getBusRoute() {
   LCD.clear();
   LCD.setCursor(0, 1);
   LCD.print(keyStr);
+
+  return keyStr;
 }
 
-void getBusStops(int route) {
+void getBusRoute(String route) {
+  Serial.println("Fetching the bus stops for the route");
+  if (WiFi.status() == WL_CONNECTED) {
+    String url = "https://webservices.umoiq.com/service/publicJSONFeed?command=routeConfig&a=ttc&r=" + route;
 
+    WiFiClientSecure client;
+    client.setInsecure();
+
+    HTTPClient http;
+
+    Serial.println("Using the bus route url");
+    // Serial.println(url);
+    if (http.begin(client, url)) {
+      int httpCode = http.GET();
+      if (httpCode > 0) {
+        String payload = http.getString();
+        Serial.println("Response: ");
+        Serial.println(payload);
+
+        JsonDocument doc ;
+        DeserializationError error = deserializeJson(doc, payload);
+        if (error) {
+          Serial.print(F("deserializeJson() failed"));
+          Serial.print(error.c_str());
+          return;
+        }
+
+        JsonObject routeObj = doc["route"];
+        if (!routeObj) {
+          Serial.println("No route found");
+          LCD.clear();
+          LCD.setCursor(0, 1);
+          LCD.print("No route!");
+        }
+        for (JsonObject stop : routeObj["stop"].as<JsonArray>()) {
+          const char* tag = stop["tag"];
+          const char* lat = stop["lat"];
+          const char* lng = stop["lon"];
+
+          String dir = getDirection(routeObj, tag);
+          Serial.println("Tag: " + String(tag) + " | Latitude: " + String(lat) + " | Longitude: " + String(lng) + " | Direction: " + dir);
+          
+        }
+        if (!routeObj) {
+          Serial.println("No route found");
+          LCD.clear();
+          LCD.print("No route!");
+          return;
+        }
+
+        // float time0 = predictions[0]["seconds"];
+        // int total_seconds = static_cast<int>(std::round(time0));
+        // int seconds = total_seconds % 60;
+        // int minutes = total_seconds / 60;
+        // char buf[17];
+        // snprintf(buf, sizeof(buf), "%d:%02d", minutes, seconds);
+        // LCD.setCursor(0, 0);
+        // LCD.printf(buf);
+
+        // if (predictions.size() > 1) {
+        //   float time1 = predictions[1]["seconds"];
+        //   int total_seconds_next = static_cast<int>(std::round(time1));
+        //   int seconds_next = total_seconds_next % 60;
+        //   int minutes_next = total_seconds_next / 60;
+        
+        //   LCD.setCursor(0, 1);
+        //   LCD.printf("%d:%02d", minutes_next, seconds_next);
+        // } else {
+        //     LCD.setCursor(0, 1);
+        //     LCD.print("No next bus");
+        // }
+      } else {
+        Serial.printf("http.GET() failed, error %d\n", httpCode);
+        LCD.clear();
+        LCD.setCursor(0, 0);
+        LCD.print("HTTP Error");
+      }
+      http.end();
+    } else {
+      Serial.println("Could not make HTTP request");
+      LCD.clear();
+      LCD.setCursor(0, 0);
+      LCD.print("HTTP Request Failed");
+    }
+  } else {
+    Serial.println("WiFi not connected");
+    LCD.clear();
+    LCD.setCursor(0, 0);
+    LCD.print("WiFi Error");
+  }
+}
+
+String getDirection(JsonObject routeObj, const char* stopTag) {
+  bool isNorth = false;
+  bool isEast = false;
+  bool isSouth = false;
+  bool isWest = false;
+
+  for (JsonObject dir: routeObj["direction"].as<JsonArray>()) {
+    const char* dirName = dir["name"];
+
+    for (JsonObject stopRef: dir["stop"].as<JsonArray>()) {
+      const char* tag = stopRef["tag"];
+      if (strcmp(tag, stopTag) == 0) {
+        if (strcmp(dirName, "North") == 0) isNorth = true;
+        else if (strcmp(dirName, "East") == 0) isEast = true;
+        else if (strcmp(dirName, "South") == 0) isSouth = true;
+        else if (strcmp(dirName, "West") == 0) isWest = true; 
+      }
+    }
+  }
+  if (isNorth) return "North";
+  else if (isEast) return "East";
+  else if (isSouth) return "South";
+  else if (isWest) return "West";
+  return "None";
 }
 
 
@@ -321,9 +445,10 @@ void setup() {
 
   LCD.clear();
   LCD.setCursor(0, 0);
-  LCD.println("Online");
+  LCD.print("Online");
   LCD.setCursor(0, 1);
-  getBusRoute();
+  String busNum = getBusNum();
+  getBusRoute(busNum);
   // getLocation();
   // getBus();
   lastUpdated = millis();
@@ -338,8 +463,8 @@ void loop() {
   //   }
   // }
 
-  if (millis() - lastUpdated > busInterval) {
-    getBus();
-    lastUpdated = millis();
-  }
+  // if (millis() - lastUpdated > busInterval) {
+  //   getBus();
+  //   lastUpdated = millis();
+  // }
 }

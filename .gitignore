@@ -7,3 +7,5 @@
 src/secrets.h
 networks.json
 weather.json
+route.txt
+route.json
