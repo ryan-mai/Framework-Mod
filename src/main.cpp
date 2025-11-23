@@ -1,5 +1,7 @@
 #include <Arduino.h>
 
+#include <math.h>
+
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <WiFi.h>
@@ -38,166 +40,10 @@ const long updateInterval = 600000; // 10 mins;
 const long busInterval = 30067; // 30.67 secs;
 const long connectionDelay = 500;
 
-String getBusNum() {
-  char key;
-  String keyStr = "";
-  String prevKeyStr = "";
-  while (true) {
-    char key = keypad.getKey();
-
-    if (key != NO_KEY) {
-      if (key == '#') {
-        break;
-      } else if (key == '*') {
-        if (!keyStr.isEmpty()) {
-          keyStr.remove(keyStr.length() - 1);
-        }
-      } else if (key == 'A') {
-        keyStr += 'N';
-      } else if (key == 'B') {
-        keyStr += 'E';
-      } else if (key == 'C') {
-        keyStr += 'S';
-      } else if (key == 'D') {
-        keyStr += 'W';
-      } else {
-        keyStr += key;
-      }
-      if (keyStr != prevKeyStr) {
-        prevKeyStr = keyStr;
-        LCD.clear();
-        LCD.setCursor(0, 1);
-        LCD.print(keyStr);
-      }
-    }
-  }
-  LCD.clear();
-  LCD.setCursor(0, 1);
-  LCD.print(keyStr);
-
-  return keyStr;
-}
-
-void getBusRoute(String route) {
-  Serial.println("Fetching the bus stops for the route");
-  if (WiFi.status() == WL_CONNECTED) {
-    String url = "https://webservices.umoiq.com/service/publicJSONFeed?command=routeConfig&a=ttc&r=" + route;
-
-    WiFiClientSecure client;
-    client.setInsecure();
-
-    HTTPClient http;
-
-    Serial.println("Using the bus route url");
-    // Serial.println(url);
-    if (http.begin(client, url)) {
-      int httpCode = http.GET();
-      if (httpCode > 0) {
-        String payload = http.getString();
-        Serial.println("Response: ");
-        Serial.println(payload);
-
-        JsonDocument doc ;
-        DeserializationError error = deserializeJson(doc, payload);
-        if (error) {
-          Serial.print(F("deserializeJson() failed"));
-          Serial.print(error.c_str());
-          return;
-        }
-
-        JsonObject routeObj = doc["route"];
-        if (!routeObj) {
-          Serial.println("No route found");
-          LCD.clear();
-          LCD.setCursor(0, 1);
-          LCD.print("No route!");
-        }
-        for (JsonObject stop : routeObj["stop"].as<JsonArray>()) {
-          const char* tag = stop["tag"];
-          const char* lat = stop["lat"];
-          const char* lng = stop["lon"];
-
-          String dir = getDirection(routeObj, tag);
-          Serial.println("Tag: " + String(tag) + " | Latitude: " + String(lat) + " | Longitude: " + String(lng) + " | Direction: " + dir);
-          
-        }
-        if (!routeObj) {
-          Serial.println("No route found");
-          LCD.clear();
-          LCD.print("No route!");
-          return;
-        }
-
-        // float time0 = predictions[0]["seconds"];
-        // int total_seconds = static_cast<int>(std::round(time0));
-        // int seconds = total_seconds % 60;
-        // int minutes = total_seconds / 60;
-        // char buf[17];
-        // snprintf(buf, sizeof(buf), "%d:%02d", minutes, seconds);
-        // LCD.setCursor(0, 0);
-        // LCD.printf(buf);
-
-        // if (predictions.size() > 1) {
-        //   float time1 = predictions[1]["seconds"];
-        //   int total_seconds_next = static_cast<int>(std::round(time1));
-        //   int seconds_next = total_seconds_next % 60;
-        //   int minutes_next = total_seconds_next / 60;
-        
-        //   LCD.setCursor(0, 1);
-        //   LCD.printf("%d:%02d", minutes_next, seconds_next);
-        // } else {
-        //     LCD.setCursor(0, 1);
-        //     LCD.print("No next bus");
-        // }
-      } else {
-        Serial.printf("http.GET() failed, error %d\n", httpCode);
-        LCD.clear();
-        LCD.setCursor(0, 0);
-        LCD.print("HTTP Error");
-      }
-      http.end();
-    } else {
-      Serial.println("Could not make HTTP request");
-      LCD.clear();
-      LCD.setCursor(0, 0);
-      LCD.print("HTTP Request Failed");
-    }
-  } else {
-    Serial.println("WiFi not connected");
-    LCD.clear();
-    LCD.setCursor(0, 0);
-    LCD.print("WiFi Error");
-  }
-}
-
-String getDirection(JsonObject routeObj, const char* stopTag) {
-  bool isNorth = false;
-  bool isEast = false;
-  bool isSouth = false;
-  bool isWest = false;
-
-  for (JsonObject dir: routeObj["direction"].as<JsonArray>()) {
-    const char* dirName = dir["name"];
-
-    for (JsonObject stopRef: dir["stop"].as<JsonArray>()) {
-      const char* tag = stopRef["tag"];
-      if (strcmp(tag, stopTag) == 0) {
-        if (strcmp(dirName, "North") == 0) isNorth = true;
-        else if (strcmp(dirName, "East") == 0) isEast = true;
-        else if (strcmp(dirName, "South") == 0) isSouth = true;
-        else if (strcmp(dirName, "West") == 0) isWest = true; 
-      }
-    }
-  }
-  if (isNorth) return "North";
-  else if (isEast) return "East";
-  else if (isSouth) return "South";
-  else if (isWest) return "West";
-  return "None";
-}
-
-
-void getLocation() {
+bool getLocation(float* latOut, float* lngOut) {
+  *latOut = 0.0f;
+  *lngOut = 0.0f;
+  
   if (WiFi.status() == WL_CONNECTED) {
     WiFiClientSecure client;
     client.setInsecure();
@@ -227,6 +73,7 @@ void getLocation() {
       if (httpCode > 0) {
         String payload = http.getString();
         Serial.println(payload);
+        http.end();
 
         JsonDocument doc;
 
@@ -234,20 +81,26 @@ void getLocation() {
         if (error) {
           Serial.print(F("deserializeJson() failed"));
           Serial.println(error.c_str());
-          return;
+          return false;
         }
 
-        float lat = doc["location"]["lat"];
-        float lng = doc["location"]["lng"];
+        *latOut = doc["location"]["lat"];
+        *lngOut = doc["location"]["lng"];
+        float accuracy = doc["accuracy"];
+        Serial.printf("Location: %.7f, %.7f (accuracy: %.0f m)\n", *latOut,*lngOut, accuracy);
+        return true;
       }
+      *latOut = 0.0;
+      *lngOut = 0.0;
     }
   }
+  return false;
 }
 
-void getBus() {
+void getBus(String stopId) {
   Serial.println("Accessing the train api");
   if (WiFi.status() == WL_CONNECTED) {
-    String url = "https://retro.umoiq.com/service/publicJSONFeed?command=predictions&a=ttc&stopId=230";
+    String url = "https://retro.umoiq.com/service/publicJSONFeed?command=predictions&a=ttc&stopId=" + stopId;
 
     WiFiClientSecure client;
     client.setInsecure();
@@ -271,46 +124,54 @@ void getBus() {
           return;
         }
 
-        JsonArray items = doc["predictions"].as<JsonArray>();
-        JsonObject routeObj;
-        for (JsonObject obj : items) {
-          if (obj["direction"].is<JsonObject>()) {
-            routeObj = obj;
-            break;
-          }
+        JsonObject predictionsObj = doc["predictions"].as<JsonObject>();
+        if (predictionsObj.isNull() || predictionsObj.size() == 0) {
+          Serial.println("No prediction data");
+          LCD.clear();
+          LCD.print("No Bus Data!");
         }
-        if (!routeObj) {
+
+        JsonObject routeObj = predictionsObj["direction"].as<JsonObject>();
+        if (routeObj.isNull()) {
           Serial.println("No directions found");
           LCD.clear();
           LCD.print("No Directions!");
           return;
         }
 
-        JsonVariant predictionsObj = routeObj["direction"]["prediction"];
+        JsonVariant predVar = routeObj["prediction"];
         JsonArray predictions;
-        if (predictionsObj.is<JsonArray>()) {
-          predictions =  predictionsObj.as<JsonArray>();
+
+        if (predVar.is<JsonArray>()) {
+          predictions = predVar.as<JsonArray>();
+        } else if (predVar.is<JsonObject>()) {
+          JsonDocument tempDoc;
+          tempDoc.clear();
+          predictions = tempDoc.to<JsonArray>();
+          predictions.add(predVar);
         } else {
-          predictions = JsonArray();
+          LCD.clear();
+          LCD.print("No upcoming!");
+          return;
         }
-        
         if (predictions.size() == 0) {
           LCD.clear();
-          LCD.print("No Bus Data!");
+          LCD.print("No upcoming!");
           return;
         }
 
-        float time0 = predictions[0]["seconds"];
+        float time0 = atof( predictions[0]["seconds"] | "9999");
         int total_seconds = static_cast<int>(std::round(time0));
         int seconds = total_seconds % 60;
         int minutes = total_seconds / 60;
+
         char buf[17];
         snprintf(buf, sizeof(buf), "%d:%02d", minutes, seconds);
         LCD.setCursor(0, 0);
         LCD.printf(buf);
 
         if (predictions.size() > 1) {
-          float time1 = predictions[1]["seconds"];
+          float time1 = atof(predictions[1]["seconds"] | "9999");
           int total_seconds_next = static_cast<int>(std::round(time1));
           int seconds_next = total_seconds_next % 60;
           int minutes_next = total_seconds_next / 60;
@@ -319,7 +180,174 @@ void getBus() {
           LCD.printf("%d:%02d", minutes_next, seconds_next);
         } else {
             LCD.setCursor(0, 1);
-            LCD.print("No next bus");
+            LCD.print("--:--");
+        }
+      } else {
+        Serial.printf("http.GET() failed, error %d\n", httpCode);
+        LCD.clear();
+        LCD.setCursor(0, 0);
+        LCD.print("HTTP Error");
+      }
+      http.end();
+    } else {
+      Serial.println("Could not make HTTP request");
+      LCD.clear();
+      LCD.setCursor(0, 0);
+      LCD.print("HTTP Request Failed");
+    }
+  } else {
+    Serial.println("WiFi not connected");
+    LCD.clear();
+    LCD.setCursor(0, 0);
+    LCD.print("WiFi Error");
+  }
+}
+
+String getBusNum() {
+  char key;
+  String keyStr = "";
+  String prevKeyStr = "";
+  while (true) {
+    char key = keypad.getKey();
+
+    if (key != NO_KEY) {
+      if (key >= '0' && key <= '9') {
+        keyStr += key;
+      } else if (key == '*') {
+        if (!keyStr.isEmpty()) {
+          keyStr.remove(keyStr.length() - 1);
+        }
+      } else if (key == 'A' && !keyStr.isEmpty()) { keyStr += 'N'; break; }
+      else if (key == 'B' && !keyStr.isEmpty()) { keyStr += 'E'; break; }
+      else if (key == 'C' && !keyStr.isEmpty()) { keyStr += 'S'; break; }
+      else if (key == 'D' && !keyStr.isEmpty()) { keyStr += 'W'; break; }
+      if (keyStr != prevKeyStr) {
+        prevKeyStr = keyStr;
+        LCD.clear();
+        LCD.setCursor(0, 1);
+        LCD.print(keyStr);
+      }
+    }
+  }
+  LCD.clear();
+  LCD.setCursor(0, 1);
+  LCD.print(keyStr);
+
+  return keyStr;
+}
+
+String getDirection(JsonObject routeObj, const char* stopTag) {
+  bool isNorth = false;
+  bool isEast = false;
+  bool isSouth = false;
+  bool isWest = false;
+
+  for (JsonObject dir: routeObj["direction"].as<JsonArray>()) {
+    const char* dirName = dir["name"];
+
+    for (JsonObject stopRef: dir["stop"].as<JsonArray>()) {
+      const char* tag = stopRef["tag"];
+      if (strcmp(tag, stopTag) == 0) {
+        if (strcmp(dirName, "North") == 0) isNorth = true;
+        else if (strcmp(dirName, "East") == 0) isEast = true;
+        else if (strcmp(dirName, "South") == 0) isSouth = true;
+        else if (strcmp(dirName, "West") == 0) isWest = true; 
+      }
+    }
+  }
+  if (isNorth) return "N";
+  else if (isEast) return "E";
+  else if (isSouth) return "S";
+  else if (isWest) return "W";
+  return "None";
+}
+
+float getDistance(float lat1, float lng1, float lat2, float lng2) {
+  const float R = 6371.0;
+  float dLat = (lat2 - lat1) * M_PI / 180.0;
+  float dLng = (lng2 - lng1) * M_PI / 180.0;
+  float lat1_rad = lat1 * M_PI / 180.0;
+  float lat2_rad = lat2 * M_PI / 180.0;
+
+  float a = pow(sin(dLat / 2), 2) + cos(lat1_rad) * cos(lat2_rad) * pow(sin(dLng / 2), 2);
+  float c = 2 * atan2(sqrt(a), sqrt(1 - a));
+  float d = R * c;
+  return d;
+}
+
+void getBusRoute(String route) {
+  char busDir = route.charAt(route.length() - 1);
+  String copyRoute = route;
+  copyRoute.remove(copyRoute.length() - 1);
+  String busNum = copyRoute;
+  Serial.println("Fetching the bus stops for the route");
+  if (WiFi.status() == WL_CONNECTED) {
+    String url = "https://webservices.umoiq.com/service/publicJSONFeed?command=routeConfig&a=ttc&r=" + busNum;
+
+    WiFiClientSecure client;
+    client.setInsecure();
+
+    HTTPClient http;
+
+    Serial.println("Using the bus route url");
+    // Serial.println(url);
+    if (http.begin(client, url)) {
+      int httpCode = http.GET();
+      if (httpCode > 0) {
+        String payload = http.getString();
+        Serial.println("Response: ");
+        Serial.println(payload);
+
+        JsonDocument doc ;
+        DeserializationError error = deserializeJson(doc, payload);
+        if (error) {
+          Serial.print(F("deserializeJson() failed"));
+          Serial.print(error.c_str());
+          return;
+        }
+
+        JsonObject routeObj = doc["route"];
+        if (!routeObj) {
+          Serial.println("No route found");
+          LCD.clear();
+          LCD.setCursor(0, 1);
+          LCD.print("No route!");
+          return;
+        }
+
+        float lat2, lng2;
+        getLocation(&lat2, &lng2);
+        String closestStopId = "";
+        float closestDist = 999999.0;
+        float closestLat = 0.0;
+        float closestLng = 0.0;
+
+        for (JsonObject stop : routeObj["stop"].as<JsonArray>()) {
+          const char* stopTag = stop["tag"];
+          const char* lat = stop["lat"];
+          const char* lng = stop["lon"];
+          String dir = getDirection(routeObj, stopTag);
+          if (dir == String(busDir)) {
+            Serial.println("Tag: " + String(stopTag) + " | Latitude: " + String(lat) + " | Longitude: " + String(lng) + " | Direction: " + dir);
+            float lat1 = atof(lat);
+            float lng1 = atof(lng);
+            float dist = getDistance(lat1, lng1, lat2, lng2);
+            if (dist < closestDist) {
+              closestDist = dist;
+              closestLat = lat1;
+              closestLng = lng1;
+              closestStopId = stop["stopId"].as<String>();
+            }
+          }
+        }
+        
+        if (closestStopId != "") {
+          Serial.println("StopId: " + closestStopId + " | Distance: " + String(closestDist) + "km | Latitude: " + String(closestLat) + " | Longitude: " + String(closestLng));
+          getBus(closestStopId);
+        } else {
+          Serial.println("No stops found for " + String(busDir));
+          LCD.clear();
+          LCD.print("No stop!");
         }
       } else {
         Serial.printf("http.GET() failed, error %d\n", httpCode);
@@ -449,7 +477,6 @@ void setup() {
   LCD.setCursor(0, 1);
   String busNum = getBusNum();
   getBusRoute(busNum);
-  // getLocation();
   // getBus();
   lastUpdated = millis();
 }
