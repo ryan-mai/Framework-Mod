@@ -1,12 +1,12 @@
 #include <Arduino.h>
 
 #include <math.h>
+#include <time.h>
 
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <WiFi.h>
 
-// #include <TimeLib.h>
 
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
@@ -16,6 +16,7 @@
 #include "secrets.h"
 
 const char* city = "Toronto";
+const char* timezone = "EST5EDT,M3.2.0/2,M11.1.0";
 
 #define ROW_NUM 4
 #define COLUMN_NUM 4
@@ -36,9 +37,114 @@ Keypad keypad = Keypad( makeKeymap(keys), pin_rows, pin_column, ROW_NUM, COLUMN_
 LiquidCrystal_I2C LCD(0x3F, 16, 2);
 
 unsigned long lastUpdated = 0;
-const long updateInterval = 600000; // 10 mins;
 const long busInterval = 30067; // 30.67 secs;
 const long connectionDelay = 500;
+
+bool isBus = false;
+String busId = "";
+
+int yesterday = -1;
+int lastMin = -1;
+
+int lastWeatherUpdated = 0;
+int weatherInterval = 60000;
+int tempLen = 3;
+
+
+void getTime() {
+  if (WiFi.status() == WL_CONNECTED) {
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo)) {
+      LCD.setCursor(0,0);
+      LCD.print("Time Failed");
+      delay(1000);
+      return;
+    }
+    
+    char dd[10];
+    char clock[12];
+    strftime(dd, sizeof(dd), "%a %m-%d", &timeinfo);
+    strftime(clock, sizeof(clock), "%I:%M", &timeinfo);
+    Serial.println("Day: " + String(dd) + " | Time: " + String(clock));
+
+    if (timeinfo.tm_mday != yesterday) {
+      LCD.setCursor(7, 1);
+      LCD.print("         ");
+      LCD.setCursor(7, 1);
+      LCD.print(dd);
+      yesterday = timeinfo.tm_mday;
+    }
+
+
+    if (timeinfo.tm_min != lastMin) {
+      int timeCursor = 16 - tempLen - 6;
+      LCD.setCursor(timeCursor, 0);
+      LCD.print("     ");
+      LCD.setCursor(timeCursor, 0);
+      LCD.print(clock);
+      lastMin = timeinfo.tm_min;
+    }
+  }
+}
+
+void getWeather() {
+  Serial.println("Accessing the weather api");
+  if (WiFi.status() == WL_CONNECTED) {
+    String url = "https://api.weatherapi.com/v1/current.json?key=" + String(weatherApiKey) + "&q=" + city + "&aqi=no";;
+
+    WiFiClientSecure client;
+    client.setInsecure();
+
+    HTTPClient http;
+
+    Serial.println("Using the weather url: ");
+    Serial.println(url);
+    if (http.begin(client, url)) {
+      int httpCode = http.GET();
+
+      if (httpCode > 0) {
+        String payload = http.getString();
+        Serial.println(payload);
+
+        JsonDocument doc;
+
+        DeserializationError error = deserializeJson(doc, payload);
+        if (error) {
+          Serial.print(F("deserializeJson() failed"));
+          Serial.println(error.c_str());
+          return;
+        }
+        const char* region = doc["location"]["region"];
+        float temp_c = doc["current"]["temp_c"];
+        float feelslike_c = doc["current"]["feelslike_c"];
+        const char* condition = doc["current"]["condition"]["text"];
+        float wind_kph = doc["current"]["wind_kph"];
+        // LCD.setCursor(12, 0);
+        // LCD.printf("%.13s", region);
+
+        char tempStr[10];
+        sprintf(tempStr, "%.0fC", temp_c);
+        int len = strlen(tempStr);
+        tempLen = len;
+        int cursorPos = 16 - len;
+        LCD.setCursor(cursorPos, 0);
+        LCD.printf(tempStr);
+
+        Serial.printf("%s, | %.1f°C (feels %.1f°C) | %s | Wind %.1f\n",
+                      region, temp_c, feelslike_c, condition, wind_kph
+        );
+      } else {
+        Serial.printf("http.GET() failed, error %d\n", httpCode);
+      }
+      http.end();
+    } else {
+      Serial.println("Could not make http.GET() request");
+    }
+  } else {
+    Serial.println("Could not connect to WiFi!");
+  }
+}
+
 
 bool getLocation(float* latOut, float* lngOut) {
   *latOut = 0.0f;
@@ -159,6 +265,8 @@ void getBus(String stopId) {
           LCD.print("No upcoming!");
           return;
         }
+        isBus = true;
+        busId = stopId;
 
         float time0 = atof( predictions[0]["seconds"] | "9999");
         int total_seconds = static_cast<int>(std::round(time0));
@@ -217,10 +325,11 @@ String getBusNum() {
         if (!keyStr.isEmpty()) {
           keyStr.remove(keyStr.length() - 1);
         }
-      } else if (key == 'A' && !keyStr.isEmpty()) { keyStr += 'N'; break; }
-      else if (key == 'B' && !keyStr.isEmpty()) { keyStr += 'E'; break; }
-      else if (key == 'C' && !keyStr.isEmpty()) { keyStr += 'S'; break; }
-      else if (key == 'D' && !keyStr.isEmpty()) { keyStr += 'W'; break; }
+      } else if (key == '#') { keyStr += 'N'; break; } 
+        else if (key == 'A' && !keyStr.isEmpty()) { keyStr += 'N'; break; }
+        else if (key == 'B' && !keyStr.isEmpty()) { keyStr += 'E'; break; }
+        else if (key == 'C' && !keyStr.isEmpty()) { keyStr += 'S'; break; }
+        else if (key == 'D' && !keyStr.isEmpty()) { keyStr += 'W'; break; }
       if (keyStr != prevKeyStr) {
         prevKeyStr = keyStr;
         LCD.clear();
@@ -370,63 +479,6 @@ void getBusRoute(String route) {
   }
 }
 
-void getWeather() {
-  Serial.println("Accessing the weather api");
-  if (WiFi.status() == WL_CONNECTED) {
-    String url = "https://api.weatherapi.com/v1/current.json?key=" + String(weatherApiKey) + "&q=" + city + "&aqi=no";;
-
-    WiFiClientSecure client;
-    client.setInsecure();
-
-    HTTPClient http;
-
-    Serial.println("Using the weather url: ");
-    Serial.println(url);
-    if (http.begin(client, url)) {
-      int httpCode = http.GET();
-
-      if (httpCode > 0) {
-        String payload = http.getString();
-        Serial.println(payload);
-
-        JsonDocument doc;
-
-        DeserializationError error = deserializeJson(doc, payload);
-        if (error) {
-          Serial.print(F("deserializeJson() failed"));
-          Serial.println(error.c_str());
-          return;
-        }
-        const char* region = doc["location"]["region"];
-        float temp_c = doc["current"]["temp_c"];
-        float feelslike_c = doc["current"]["feelslike_c"];
-        const char* condition = doc["current"]["condition"]["text"];
-        float wind_kph = doc["current"]["wind_kph"];
-        LCD.clear();
-        LCD.setCursor(0, 0);
-        LCD.printf("%.13s", region);
-
-        LCD.setCursor(14, 1);
-        LCD.printf("%.0fC", temp_c);
-
-        LCD.setCursor(0, 1);
-        LCD.printf("%.14s", condition);
-
-        Serial.printf("%s, | %.1f°C (feels %.1f°C) | %s | Wind %.1f\n",
-                      region, temp_c, feelslike_c, condition, wind_kph
-        );
-      } else {
-        Serial.printf("http.GET() failed, error %d\n", httpCode);
-      }
-      http.end();
-    } else {
-      Serial.println("Could not make http.GET() request");
-    }
-  } else {
-    Serial.println("Could not connect to WiFi!");
-  }
-}
-
 String nf(int num) {
   if (num < 10) return "0" + String(num);
   return String(num);
@@ -473,25 +525,38 @@ void setup() {
 
   LCD.clear();
   LCD.setCursor(0, 0);
-  LCD.print("Online");
+  LCD.print("ON");
   LCD.setCursor(0, 1);
-  String busNum = getBusNum();
-  getBusRoute(busNum);
-  // getBus();
+
+  configTzTime(timezone, "pool.ntp.org", "time.nist.gov");
+  Serial.println("Loading time");
+  LCD.setCursor(7, 1);
+  LCD.print("--- -----");
+  LCD.setCursor(7, 0);
+  LCD.print("--:-- --C");
+
+    while (time(nullptr) < 1000000000L) {
+      delay(200);
+      Serial.print("Waiting to load time...");
+    }
+    Serial.println("Time loaded!");
+  // String busNum = getBusNum();
+  // getBusRoute(busNum);
+  getWeather();
   lastUpdated = millis();
+  lastWeatherUpdated = millis();
 }
 
 void loop() {
-  // if (Serial.available()) {
-  //   char t = Serial.read();
-  //   if (t == 'T') {
-  //     unsigned long timestamp = Serial.parseInt();
-  //     setTime(timestamp);
-  //   }
-  // }
-
-  // if (millis() - lastUpdated > busInterval) {
-  //   getBus();
-  //   lastUpdated = millis();
-  // }
+  getTime();
+  if (millis() - lastWeatherUpdated > weatherInterval) {
+    getWeather();
+    lastWeatherUpdated = millis();
+  }
+  if (isBus) {
+    if (millis() - lastUpdated > busInterval) {
+      getBus(busId);
+      lastUpdated = millis();
+    }
+  }
 }
