@@ -43,6 +43,7 @@ const long connectionDelay = 500;
 bool isBus = false;
 bool cancelBus = false;
 String busId = "";
+bool enteringBus = false;
 
 int lastWeatherUpdated = 0;
 int weatherInterval = 300000;
@@ -217,6 +218,17 @@ void getWeather() {
   }
 }
 
+void clearRow(uint8_t row) {
+  LCD.setCursor(0, row);
+  LCD.print("                ");
+}
+
+void showStatus(const char* msg) {
+  clearRow(1);
+  LCD.setCursor(0, 1);
+  LCD.print(msg);
+}
+
 void getBus(String stopId) {
   Serial.println("Accessing the train api");
   if (WiFi.status() == WL_CONNECTED) {
@@ -241,29 +253,21 @@ void getBus(String stopId) {
         if (error) {
           Serial.print(F("deserializeJson() failed"));
           Serial.print(error.c_str());
+          showStatus("BUS JSON ERR");
           return;
         }
 
         JsonObject predictionsObj = doc["predictions"].as<JsonObject>();
         if (predictionsObj.isNull() || predictionsObj.size() == 0) {
           Serial.println("No prediction data");
-          LCD.setCursor(0, 0);
-          LCD.print("       ");
-          LCD.setCursor(0, 1);
-          LCD.print("       ");
-          LCD.setCursor(0, 0);
-          LCD.print("No Bus Data!");
+          showStatus("No Bus Data!");
+          return;
         }
 
         JsonObject routeObj = predictionsObj["direction"].as<JsonObject>();
         if (routeObj.isNull()) {
           Serial.println("No directions found");
-          LCD.setCursor(0, 0);
-          LCD.print("       ");
-          LCD.setCursor(0, 1);
-          LCD.print("       ");
-          LCD.setCursor(0, 0);
-          LCD.print("No Directions!");
+          showStatus("No Directions!");
           return;
         }
 
@@ -278,21 +282,11 @@ void getBus(String stopId) {
           predictions = tempDoc.to<JsonArray>();
           predictions.add(predVar);
         } else {
-          LCD.setCursor(0, 0);
-          LCD.print("       ");
-          LCD.setCursor(0, 1);
-          LCD.print("       ");
-          LCD.setCursor(0, 0);
-          LCD.print("N/A");
+          showStatus("N/A");
           return;
         }
         if (predictions.size() == 0) {
-          LCD.setCursor(0, 0);
-          LCD.print("       ");
-          LCD.setCursor(0, 1);
-          LCD.print("       ");
-          LCD.setCursor(0, 0);
-          LCD.print("N/A");
+          showStatus("No upcoming!");
           Serial.println("No upcoming!");
           return;
         }
@@ -306,7 +300,8 @@ void getBus(String stopId) {
 
         char buf[17];
         snprintf(buf, sizeof(buf), "%d:%02d", minutes, seconds);
-        LCD.setCursor(0, 0);
+        clearRow(1);
+        LCD.setCursor(0, 1);
         LCD.print(buf);
 
         if (predictions.size() > 1) {
@@ -314,82 +309,68 @@ void getBus(String stopId) {
           int total_seconds_next = static_cast<int>(std::round(time1));
           int seconds_next = total_seconds_next % 60;
           int minutes_next = total_seconds_next / 60;
-        
-          LCD.setCursor(0, 1);
-          LCD.printf("%d:%02d", minutes_next, seconds_next);
-        } else {
-            LCD.setCursor(0, 1);
-            LCD.print("--:--");
+
+          // Append "  next m:ss"
+          char buf2[17];
+          snprintf(buf2, sizeof(buf2), " %d:%02d", minutes_next, seconds_next);
+          LCD.print(buf2);
         }
       } else {
         Serial.printf("http.GET() failed, error %d\n", httpCode);
-          LCD.setCursor(0, 0);
-          LCD.print("       ");
-          LCD.setCursor(0, 1);
-          LCD.print("       ");
-          LCD.setCursor(0, 0);
-        LCD.print("ERR");
+        showStatus("BUS ERR");
       }
       http.end();
     } else {
       Serial.println("Could not make HTTP request");
-      LCD.setCursor(0, 0);
-      LCD.print("       ");
-      LCD.setCursor(0, 1);
-      LCD.print("       ");
-      LCD.setCursor(0, 0);
-      LCD.print("REQ");
+      showStatus("REQ FAIL");
     }
   } else {
     Serial.println("WiFi not connected");
-    LCD.setCursor(0, 0);
-    LCD.print("       ");
-    LCD.setCursor(0, 1);
-    LCD.print("       ");
-    LCD.setCursor(0, 0);
-    LCD.print("WIFI!");
+    showStatus("WIFI!");
   }
 }
-
 String getBusNum() {
-  LCD.setCursor(0, 0);
-  LCD.print("ENT: ");
-  char key;
+  clearRow(1);
+  LCD.setCursor(0, 1);
+  LCD.print("Bus: ");
+  
   String keyStr = "";
-  String prevKeyStr = "";
+  
   while (true) {
     char key = keypad.getKey();
     if (key != NO_KEY) {
-      Serial.println("Key pressed: " + String(key)); 
       if (key >= '0' && key <= '9') {
         keyStr += key;
-      } else if (key == '*') {
-        if (!keyStr.isEmpty()) {
-          keyStr.remove(keyStr.length() - 1);
-        }
-      } else if (key == '#') {
-        return "CANCEL"; 
-      } else if (key == 'A' && !keyStr.isEmpty()) { keyStr += 'N'; break; }
-        else if (key == 'B' && !keyStr.isEmpty()) { keyStr += 'E'; break; }
-        else if (key == 'C' && !keyStr.isEmpty()) { keyStr += 'S'; break; }
-        else if (key == 'D' && !keyStr.isEmpty()) { keyStr += 'W'; break; }
-        if (keyStr != prevKeyStr) {
-        prevKeyStr = keyStr;
-        LCD.setCursor(0, 0);
-        LCD.print("       ");
-        LCD.setCursor(0, 0);
-        LCD.print(keyStr);
+      } 
+      else if (key == '*') {
+        if (!keyStr.isEmpty()) keyStr.remove(keyStr.length() - 1);
+      } 
+      else if (key == '#') {
+        clearRow(1);
+        return "CANCEL";
       }
+      else if (key == 'A' || key == 'B' || key == 'C' || key == 'D') {
+        if (keyStr.isEmpty()) continue;
+        if (key == 'A') keyStr += 'N';
+        if (key == 'B') keyStr += 'E';
+        if (key == 'C') keyStr += 'S';
+        if (key == 'D') keyStr += 'W';
+        clearRow(1);
+        LCD.setCursor(0, 0);
+        LCD.print("GET ");
+        LCD.print(keyStr);
+        delay(800);
+        clearRow(1);
+        return keyStr;
+      }
+
+      LCD.setCursor(5, 0);
+      LCD.print("            ");
+      LCD.setCursor(5, 0);
+      LCD.print(keyStr);
     }
-    LCD.setCursor(0, 0);
-    LCD.print("       ");
-    LCD.setCursor(0, 0);
-    LCD.print(keyStr);
-    if (keypad.getKey() == '#') {
-      return "CANCEL";
-    }
+    delay(50);
   }
-  return keyStr;
 }
 
 String getDirection(JsonObject routeObj, const char* stopTag) {
@@ -446,7 +427,6 @@ void getBusRoute(String route) {
     HTTPClient http;
 
     Serial.println("Using the bus route url");
-    // Serial.println(url);
     if (http.begin(client, url)) {
       int httpCode = http.GET();
       if (httpCode > 0) {
@@ -459,18 +439,14 @@ void getBusRoute(String route) {
         if (error) {
           Serial.print(F("deserializeJson() failed"));
           Serial.print(error.c_str());
+          showStatus("JSON ERR");
           return;
         }
 
         JsonObject routeObj = doc["route"];
         if (!routeObj) {
           Serial.println("No route found");
-          LCD.setCursor(0, 0);
-          LCD.print("       ");
-          LCD.setCursor(0, 1);
-          LCD.print("       ");
-          LCD.setCursor(0, 0);
-          LCD.print("No route!");
+          showStatus("No Route");
           return;
         }
 
@@ -506,39 +482,20 @@ void getBusRoute(String route) {
           getBus(closestStopId);
         } else {
           Serial.println("No stops found for " + String(busDir));
-          LCD.setCursor(0, 0);
-          LCD.print("       ");
-          LCD.setCursor(0, 1);
-          LCD.print("       ");
-          LCD.print("No stop!");
+          showStatus("No Stop");
         }
       } else {
         Serial.printf("http.GET() failed, error %d\n", httpCode);
-        LCD.setCursor(0, 0);
-        LCD.print("       ");
-        LCD.setCursor(0, 1);
-        LCD.print("       ");
-        LCD.setCursor(0, 0);
-        LCD.print("HTTP Error");
+        showStatus("HTTP ERR");
       }
       http.end();
     } else {
       Serial.println("Could not make HTTP request");
-      LCD.setCursor(0, 0);
-      LCD.print("       ");
-      LCD.setCursor(0, 1);
-      LCD.print("       ");
-      LCD.setCursor(0, 0);
-      LCD.print("HTTP Request Failed");
+      showStatus("Req Fail");
     }
   } else {
     Serial.println("WiFi not connected");
-    LCD.setCursor(0, 0);
-    LCD.print("       ");
-    LCD.setCursor(0, 1);
-    LCD.print("       ");
-    LCD.setCursor(0, 0);
-    LCD.print("WiFi Error");
+    showStatus("WiFi ERR");
   }
 }
 
@@ -546,10 +503,6 @@ String nf(int num) {
   if (num < 10) return "0" + String(num);
   return String(num);
 }
-
-// String formateDate() {
-//   return String(year()) + "-" + nf(month()) + "-" + nf(day()) + " " + nf(hour()) + ":" + nf(minute()) + ":" + nf(second());
-// }
 
 void spinner() {
   static int8_t counter = 0;
@@ -608,6 +561,7 @@ void setup() {
   lastUpdated = millis();
   lastWeatherUpdated = millis();
   lastTimeUpdated = millis();
+  clearRow(1);
 }
 
 void loop() {
@@ -615,23 +569,17 @@ void loop() {
   if (key == '#') {
       cancelBus = true;
   }
-  if (cancelBus) {
-    isBus = false;
-    busId = "";
-    cancelBus = false;
-    LCD.clear();
-    LCD.setCursor(0, 0);
-    LCD.print("ENT:");
-    return;
+
+  if (!isBus && !enteringBus && key >= '0' && key <= '9') {
+    enteringBus = true;
   }
 
-  if (!isBus) {
+  if (enteringBus) {
     String busNum = getBusNum();
-    if (busNum == "CANCEL") {
-      return;
+    if (busNum != "CANCEL" && !busNum.isEmpty()) {
+      getBusRoute(busNum);
     }
-    getBusRoute(busNum);
-    isBus = true;
+    enteringBus = false;
   }
 
   if (millis() - lastWeatherUpdated > weatherInterval) {
