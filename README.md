@@ -2,6 +2,7 @@
 Ever woke up late for school? And then missed the bus? Well, Nexus, is a device that not only provides basic features like the time, date, and weather, but also the next bus arrival. Instead of needing to get your phone, you can seemlessly chomp down on your breakfast, and get dressed before you know it! 
 
 ![Nexus](./assets/nexus.jpeg)
+`Demo Link:` https://youtube.com/shorts/aetpZ6YrA_w?feature=share
 ---
 
 ## Guide on building Nexus!
